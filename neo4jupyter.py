@@ -4,17 +4,6 @@ import uuid
 import tempfile
 from IPython.display import HTML, Javascript, display
 
-DEFAULT_PHYSICS = {
-    "physics": {
-        "barnesHut": {
-            "gravitationalConstant": -15150,
-            "centralGravity": 3.45,
-            "springLength": 261,
-            "damping": 0.3
-        }
-    }
-}
-
 
 def get_visjs():
     return
