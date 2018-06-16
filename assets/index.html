@@ -1,4 +1,4 @@
-<div id="{id}" style="height: 400px;"></div>
+<div id="{id}" style="height: 800px;"></div>
 
 <script type="text/javascript">
 
@@ -14,30 +14,32 @@
 
     var options = {{
     nodes: {{
-        shape: 'dot',
+	shape: 'ellipse',
         size: 25,
         font: {{
             size: 14
         }}
     }},
     edges: {{
-        font: {{
+	font: {{
             size: 14,
             align: 'middle'
         }},
-        color: 'gray',
+	color: 'gray',
         arrows: {{
             to: {{
                 enabled: true,
                 scaleFactor: 0.5
             }}
-        }},
-        smooth: {{
-            enabled: false
+	}},
+	smooth: {{
+            enabled: true,
+            type: 'dynamic'
         }}
     }},
     physics: {{
-        enabled: {physics}
+        enabled: {physics},
+        solver: 'repulsion'  
         }}
     }};
 
