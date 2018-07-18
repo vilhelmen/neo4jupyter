@@ -1,131 +1,319 @@
-import os
-import json
 import uuid
-import tempfile
+import json
 from IPython.display import HTML, Javascript, display
+from collections.abc import Iterable
+
+# Pull in vis.js
+def initialize():
+    display(Javascript(data="""
+    require.config({
+      paths: {
+        vis: '//LOCAL_HOST_STRING_AAAAAAAAAA/static/vis_js/4.8.2/vis.min'
+      }
+    });
+    require(['vis'], function(vis) {
+      window.vis = vis;
+    });""",css='https://LOCAL_HOST_STRING_AAAAAAAAAA/static/vis_js/4.8.2/vis.css'))
 
 
-def get_visjs():
-    return
+def vis_network(nodes, edges, options):
+    base = \
+"""
+<div id="{id}" style="height: 600px;"></div>
+<script type="text/javascript">
+var nodes = {nodes};
+var edges = {edges};
 
+var container = document.getElementById("{id}");
 
-def init_notebook_mode():
-    """
-    Creates a script tag and prints the JS read from the file in the tag.
-    """
+var data = {{
+    nodes: nodes,
+    edges: edges
+}};
 
-    display(
-        Javascript(data="require.config({ " +
-                        "    paths: { " +
-                        "        vis: '//cdnjs.cloudflare.com/ajax/libs/vis/4.8.2/vis.min' " +
-                        "    } " +
-                        "}); " +
-                        "require(['vis'], function(vis) { " +
-                        " window.vis = vis; " +
-                        "}); ",
-                   css='https://cdnjs.cloudflare.com/ajax/libs/vis/4.8.2/vis.css')
-        )
+var options = {options};
 
-def vis_network(nodes, edges, physics=True):
-    """
-    Creates the HTML page with all the parameters
-    :param nodes: The nodes to be represented an their information.
-    :param edges: The edges represented an their information.
-    :param physics: The options for the physics of vis.js.
-    :return: IPython.display.HTML
-    """
-    base = open(os.path.join(os.path.dirname(__file__), 'assets/index.html')).read()
+var network = new vis.Network(container, data, options);
+
+</script>
+"""
 
     unique_id = str(uuid.uuid4())
-    html = base.format(id=unique_id, nodes=json.dumps(nodes), edges=json.dumps(edges), physics=json.dumps(physics))
+    html = base.format(id=unique_id, nodes=json.dumps(nodes), edges=json.dumps(edges), options=json.dumps(options))
 
     return HTML(html)
 
 
-def draw(graph, options, physics=True, limit=100):
+def get_node_vis_info(node, label_map):
+    node_label = list(node.labels)[0]
+    prop_key = label_map.get(node_label, '')
+    vis_label = node.get(prop_key, '')
+
+    # Title is mouseover text (change to object label by default?)
+    # Label is printed text
+    # Value is (optionally) used to node size.
+    node_data = {'id': node.identity, 'group': node_label, 'value': 0}
+    if vis_label:
+        node_data['label'] = vis_label
+        node_data['title'] = vis_label
+    else:
+        node_data['label'] = node_label
+        node_data['title'] = node_label
+
+    return node_data
+
+
+def get_edge_vis_info(edge, node_map, label_map):
+    #edge_label = list(edge.labels)[0] # WHY DOES THIS NOT WORK
+    edge_label = next(iter(edge.types()))
+    prop_key = label_map.get(edge_label, '')
+    vis_label = edge.get(prop_key, '')
+
+    # Title is mouseover text (change to object label by default?)
+    # Label is printed text
+    # ooh, could title labels [x] -> [y] and use the node label! I like it!
+    edge_data = {'from': edge.start_node.identity, 'to': edge.end_node.identity}
+
+    title = node_map[edge.start_node.identity]['label'] + " -[" + edge_label + "]-> " + node_map[edge.end_node.identity]['label']
+
+    if vis_label:
+        edge_data['label'] = vis_label
+    if title: # I do realize this will always trigger in this version
+        edge_data['title'] = title
+    return edge_data
+
+# Ellipses, pretty basic. Looks nice for small graphs
+small_options = {
+    "nodes": {
+        "shape": "ellipse",
+        "size": 25,
+        "font": {
+            "size": "14"
+        }
+    },
+    "edges": {
+        "font": {
+            "size": 14,
+            "align": "middle"
+        },
+        "color": {
+            "color":"grey",
+            "highlight": "#404040"
+        },
+        "arrows": {
+            "to": {
+                "enabled": True,
+                "scaleFactor": 0.5
+            }
+        },
+        "smooth": {
+            "enabled": True,
+            "type": "dynamic"
+        }
+    },
+    "physics": {
+        "enabled": False,
+        "solver": "repulsion"
+    }
+}
+
+# Dots. Unfortunately, labels are under the object, not within
+#  so label backgrounds are turned on, though they look a bit gross.
+# Dots scale with their value, with settings for pretty large graphs
+# Looks absolutely terrible with small graphs.
+large_options = {
+    "nodes": {
+        "scaling" : {
+            "min": 10,
+            "max": 800,
+            "label": {
+                "enabled": True,
+                "min": 14,
+                "max": 250
+            },
+        },
+        "shape": "dot",
+        "size": 25,
+        "font": {
+            "size": "14",
+            "background": "white"
+        }
+    },
+    "edges": {
+        "font": {
+            "size": 14,
+            "align": "middle"
+        },
+        "color": {
+            "color":"grey",
+            "highlight":"#404040",
+        },
+        "arrows": {
+            "to": {
+                "enabled": True,
+                "scaleFactor": 0.5
+            }
+        },
+        "smooth": {
+            "enabled": True,
+            "type": "dynamic"
+        }
+    },
+    "physics": {
+        "enabled": False,
+        "solver": "repulsion"
+    }
+}
+
+def draw_mrn(data, label_map, physics=True, options=None):
     """
-    The options argument should be a dictionary of node labels and property keys; it determines which property
-    is displayed for the node label. For example, in the movie graph, options = {"Movie": "title", "Person": "name"}.
-    Omitting a node label from the options dict will leave the node unlabeled in the visualization.
-    Setting physics = True makes the nodes bounce around when you touch them!
+    Draw a graph of relationships m<-[r]->n
 
-    :param graph: Connection to the DB where the query will be executed.
-    :param options: Options for the Nodes.
-    :param physics: Physics of the vis.js visualization.
-    :param limit: Maximum number of Nodes or Edges.
-    :return: IPython.display.HTML
+    Data: something iterable containing objects of form [m,r,n]
+        Direction of r will be correctly detected. Duplicate edges are elided.
+        M and n are really just a formality, take a look at draw_r to draw from relationships only.
+    
+    Physics: bool, whether to enable physics or not. Usually comes out as a big lump with physics off
+    
+    label_map: dict of naming settings. Maps the label to the property used to name it (ex: {"Page": "title"})
+        Works for nodes and edges. Unresolved properties or labels will default to the empty string.
+        Entities are named by their first label.
+
+    Options: JS configuration dictionary. None to select a default
     """
 
-    query = """
-    MATCH (n)
-    WITH n, rand() AS random
-    ORDER BY random
-    LIMIT {limit}
-    OPTIONAL MATCH (n)-[r]->(m)
-    RETURN n AS source_node,
-           id(n) AS source_id,
-           r,
-           m AS target_node,
-           id(m) AS target_id
-    """
-
-    data = graph.run(query, limit=limit)
-
-    nodes = []
-    edges = []
-
-    def get_vis_info(node, id):
-        node_label = list(node.labels())[0]
-        prop_key = options.get(node_label)
-        vis_label = node.properties.get(prop_key, "")
-
-        return {"id": id, "label": vis_label, "group": node_label, "title": repr(node.properties)}
+    nodes = {}
+    edges = {}
 
     for row in data:
-        source_node = row[0]
-        source_id = row[1]
-        rel = row[2]
-        target_node = row[3]
-        target_id = row[4]
+        m_node = row[0]
+        rel = row[1]
+        n_node = row[2]
 
-        source_info = get_vis_info(source_node, source_id)
+        if m_node.identity not in nodes:
+                nodes[m_node.identity] = get_node_vis_info(m_node, label_map)
+        else:
+            nodes[m_node.identity]['value'] += 1
 
-        if source_info not in nodes:
-            nodes.append(source_info)
+        if n_node.identity not in nodes:
+            nodes[n_node.identity] = get_node_vis_info(n_node, label_map)
+        else:
+            nodes[m_node.identity]['value'] += 1
 
+        # A reasonable check, why remove it I guess?
         if rel is not None:
-            target_info = get_vis_info(target_node, target_id)
+            if rel.identity not in edges:
+                edges[rel.identity] = get_edge_vis_info(rel, nodes, label_map)
+            #edges.append({"from": source_info["id"], "to": target_info["id"], "label": next(iter(r.types()))})
+            #edges.append({"from": rel.start_node.identity, "to": rel.end_node.identity, "label": ''})
 
-            if target_info not in nodes:
-                nodes.append(target_info)
+    if options is None:
+        options = small_options;
+    options['physics']['enabled'] = physics
+    return vis_network(list(nodes.values()), list(edges.values()), options)
 
-            edges.append({"from": source_info["id"], "to": target_info["id"], "label": rel.type()})
+def draw_nr(node_list, relationship_list, label_map, physics=True, options=None):
+    """
+    Draw a graph of nodes and their relationships.
 
-    return vis_network(nodes, edges, physics=physics)
-
-def get_vis_edge_info(r):
-    return({"from": id(r.start_node()), "to": id(r.end_node()), "label": r.type()})
-
-##calculate the dict that will represent a node.
-def get_vis_node_info(node, options):
-    node_label = next(iter(node.labels()),"")
-    prop_key = options.get(node_label)
-    vis_label = node.get(prop_key, "")
+    Node_list: something iterable containing nodes
     
-    return {"id": id(node), "label": vis_label, "group": node_label, "title": repr(node)}
+    relationship_list: something iterable containing relationships
+    
+    Physics: bool, whether to enable physics or not. Usually comes out as a big lump with physics off
+    
+    label_map: dict of naming settings. Maps the label to the property used to name it (ex: {"Page": "title"})
+        Works for nodes and edges. Unresolved properties or labels will default to the empty string.
+        Entities are named by their first label.
 
-def draw_subgraph(subgraph, options, physics=True, limit=100):
-    """
-    The options argument should be a dictionary of node labels and property keys; it determines which property
-    is displayed for the node label. For example, in the movie graph, options = {"Movie": "title", "Person": "name"}.
-    Omitting a node label from the options dict will leave the node unlabeled in the visualization.
-    Setting physics = True makes the nodes bounce around when you touch them!
-    :param subgraph: Subgaph containing nodes and relationships to plot.
-    :param options: Options for the Nodes.
-    :param physics: Physics of the vis.js visualization.
-    :return: IPython.display.HTML
+    Options: JS configuration dictionary. None to select a default
     """
 
-    nodes = [get_vis_node_info(n,options) for n in subgraph.nodes()]
-    edges = [get_vis_edge_info(r) for r in subgraph.relationships()]
-    return vis_network(nodes, edges, physics=physics)
+    nodes = {}
+    edges = {}
+
+    for n_node in node_list:
+        if n_node.identity not in nodes:
+            nodes[n_node.identity] = get_node_vis_info(n_node, label_map)
+
+    for rel in relationship_list:
+        if rel.start_node.identity not in nodes:
+            nodes[rel.start_node.identity] = get_node_vis_info(rel.start_node, label_map)
+        else:
+            nodes[rel.start_node.identity]['value'] += 1
+
+        if rel.end_node.identity not in nodes:
+            nodes[rel.end_node.identity] = get_node_vis_info(rel.end_node, label_map)
+        else:
+            nodes[rel.end_node.identity]['value'] += 1
+
+        if rel.identity not in edges:
+            edges[rel.identity] = get_edge_vis_info(rel, nodes, label_map)
+
+    if options is None:
+        options = small_options;
+    options['physics']['enabled'] = physics
+    return vis_network(list(nodes.values()), list(edges.values()), options)
+
+def draw_r(data, label_map, physics=True, options=None):
+    """
+    Draw a graph of relationships from edges
+
+    Data: something iterable containing either a single edge per element or a list/tuple of edges.
+        Duplicate edges are elided. Different functions return different layouts, this tries to make sense of them.
+    
+    label_map: dict of naming settings. Maps the label to the property used to name it (ex: {"Page": "title"})
+        Works for nodes and edges. Unresolved properties or labels will default to the empty string.
+        Entities are named by their first label.
+    
+    Physics: bool, whether to enable physics or not. Usually comes out as a big lump with physics off
+    
+    Options: JS configuration dictionary. None to select the default
+    """
+
+    nodes = {}
+    edges = {}
+
+    def extract_edge_data(rel):
+        if rel.identity not in edges:
+            
+            m_node = rel.start_node
+            n_node = rel.end_node
+            
+            if m_node.identity not in nodes:
+                nodes[m_node.identity] = get_node_vis_info(m_node, label_map)
+            else:
+                nodes[m_node.identity]['value'] += 1
+
+            if n_node.identity not in nodes:
+                nodes[n_node.identity] = get_node_vis_info(n_node, label_map)
+            else:
+                nodes[m_node.identity]['value'] += 1
+            
+            edges[rel.identity] = get_edge_vis_info(rel, nodes, label_map)
+            #edges.append({"from": source_info["id"], "to": target_info["id"], "label": next(iter(r.types()))})
+            #edges.append({"from": rel.start_node.identity, "to": rel.end_node.identity, "label": ''})
+    
+    for row in data:
+        # Edges identify themselves as iterable but they contain nothing. Cool. Whatever.
+        # Everyone loves hardcoded types
+        # to_table gives tuples, which either contains a single element or a list. Probably gets more complex, too.
+        # data() returns something logical but complex so that's the user's problem
+        
+        # I'm going to try to parse at least the first level of craziness.
+        # Anything more complex and the user can preprocess it >:C
+        if isinstance(row,tuple):
+            for elem in row:
+                if isinstance(elem,list):
+                    for rel in elem:
+                        extract_edge_data(rel)
+                else:
+                    extract_edge_data(elem)
+        else:
+            extract_edge_data(row)
+
+    if options is None:
+        options = small_options;
+    options['physics']['enabled'] = physics
+    
+    return vis_network(list(nodes.values()), list(edges.values()), options)
